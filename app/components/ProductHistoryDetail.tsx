@@ -281,8 +281,14 @@ export default function ProductHistoryDetail({ productName, onBack }: ProductHis
     return (
       <div className="p-8">
         <div className="text-center py-16">
-          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-500 mx-auto mb-4"></div>
-          <p className="text-gray-600">Loading product history...</p>
+          <div className="relative">
+            <div className="animate-spin rounded-full h-12 w-12 border-4 border-gray-200 mx-auto mb-4"></div>
+            <div className="animate-spin rounded-full h-12 w-12 border-4 border-indigo-500 border-t-transparent absolute top-0 left-1/2 transform -translate-x-1/2 mb-4"></div>
+          </div>
+          <div className="space-y-2">
+            <p className="text-gray-700 font-medium">Loading product history...</p>
+            <p className="text-sm text-gray-500">Fetching stock movement data for {productName}</p>
+          </div>
         </div>
       </div>
     );

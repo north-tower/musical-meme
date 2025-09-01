@@ -11,7 +11,7 @@ import ProductHistoryDetail from '../components/ProductHistoryDetail';
 import ReportsSection from '../components/ReportsSection';
 
 export default function InventoryPage() {
-  const [activeSection, setActiveSection] = useState('entry');
+  const [activeSection, setActiveSection] = useState('search');
   const [records, setRecords] = useState<InventoryRecord[]>([]);
   const [selectedProduct, setSelectedProduct] = useState<InventoryRecord | null>(null);
   const [viewingProductHistory, setViewingProductHistory] = useState<string | null>(null);
