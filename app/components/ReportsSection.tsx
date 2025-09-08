@@ -68,6 +68,55 @@ interface ReportData {
     last_record: string;
     stock_trend: string;
   }>;
+  weeklyReport: {
+    week_start: string;
+    week_end: string;
+    total_products: number;
+    total_movements: number;
+    summary: {
+      total_stock_in: number;
+      total_stock_out: number;
+      total_returns: number;
+      total_rebagging: number;
+      total_damaged: number;
+      net_change: number;
+    };
+    product_movements: Array<{
+      item_name: string;
+      opening_stock: number;
+      closing_stock: number;
+      total_stock_in: number;
+      total_stock_out: number;
+      total_returns: number;
+      total_rebagging: number;
+      total_damaged: number;
+      net_change: number;
+      movement_percentage: number;
+      activity_level: 'high' | 'medium' | 'low';
+      days_active: number;
+    }>;
+    daily_summary: Array<{
+      date: string;
+      day_name: string;
+      total_transactions: number;
+      net_change: number;
+      top_product: string;
+      total_stock_in: number;
+      total_stock_out: number;
+      total_returns: number;
+      total_rebagging: number;
+      total_damaged: number;
+      products_active: number;
+      most_active_product: string;
+      most_active_product_movements: number;
+    }>;
+    efficiency_metrics: {
+      return_rate: number;
+      damage_rate: number;
+      rebagging_rate: number;
+      stock_turnover: number;
+    };
+  };
 }
 
 export default function ReportsSection({ records }: ReportsSectionProps) {
@@ -101,7 +150,8 @@ export default function ReportsSection({ records }: ReportsSectionProps) {
         productionIssues: generateProductionReport(filteredRecords),
         returnsRebagging: generateReturnsRebaggingReport(filteredRecords),
         damagedStock: generateDamagedStockReport(filteredRecords),
-        stockHistory: generateStockHistoryReport(filteredRecords)
+        stockHistory: generateStockHistoryReport(filteredRecords),
+        weeklyReport: generateWeeklyReport(filteredRecords)
       };
 
       setReportData(data);
@@ -355,6 +405,199 @@ export default function ReportsSection({ records }: ReportsSectionProps) {
       .sort((a, b) => b.total_records - a.total_records);
   };
 
+  const generateWeeklyReport = (filteredRecords: InventoryRecord[]) => {
+    if (filteredRecords.length === 0) {
+      return {
+        week_start: '',
+        week_end: '',
+        total_products: 0,
+        total_movements: 0,
+        summary: {
+          total_stock_in: 0,
+          total_stock_out: 0,
+          total_returns: 0,
+          total_rebagging: 0,
+          total_damaged: 0,
+          net_change: 0
+        },
+        product_movements: [],
+        daily_summary: [],
+        efficiency_metrics: {
+          return_rate: 0,
+          damage_rate: 0,
+          rebagging_rate: 0,
+          stock_turnover: 0
+        }
+      };
+    }
+
+    // Calculate week boundaries
+    const sortedRecords = filteredRecords.sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
+    const weekStart = sortedRecords[0].date;
+    const weekEnd = sortedRecords[sortedRecords.length - 1].date;
+
+    // Products will be counted after filtering for activity
+    
+    // Calculate summary metrics
+    const summary = {
+      total_stock_in: filteredRecords.reduce((sum, r) => sum + r.new_stock, 0),
+      total_stock_out: filteredRecords.reduce((sum, r) => sum + r.issued_production, 0),
+      total_returns: filteredRecords.reduce((sum, r) => sum + r.returns, 0),
+      total_rebagging: filteredRecords.reduce((sum, r) => sum + r.rebagging, 0),
+      total_damaged: filteredRecords.reduce((sum, r) => sum + r.damaged, 0),
+      net_change: filteredRecords.reduce((sum, r) => sum + (r.new_stock - r.issued_production), 0)
+    };
+
+    // Generate comprehensive product movements
+    const productGroups = new Map<string, InventoryRecord[]>();
+    
+    filteredRecords.forEach(record => {
+      if (!productGroups.has(record.item_name)) {
+        productGroups.set(record.item_name, []);
+      }
+      productGroups.get(record.item_name)!.push(record);
+    });
+
+    const productMovements = Array.from(productGroups.entries())
+      .map(([itemName, records]) => {
+        const sortedRecords = records.sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
+        const openingStock = sortedRecords[0].opening_stock;
+        const closingStock = sortedRecords[sortedRecords.length - 1].closing_stock;
+        
+        const totals = {
+          stock_in: records.reduce((sum, r) => sum + r.new_stock, 0),
+          stock_out: records.reduce((sum, r) => sum + r.issued_production, 0),
+          returns: records.reduce((sum, r) => sum + r.returns, 0),
+          rebagging: records.reduce((sum, r) => sum + r.rebagging, 0),
+          damaged: records.reduce((sum, r) => sum + r.damaged, 0)
+        };
+        
+        const netChange = totals.stock_in - totals.stock_out;
+        const totalActivity = totals.stock_in + totals.stock_out + totals.returns + totals.rebagging + totals.damaged;
+        const movementPercentage = openingStock > 0 ? (Math.abs(netChange) / openingStock) * 100 : 0;
+        
+        // Calculate activity level based on total movements
+        let activityLevel: 'high' | 'medium' | 'low' = 'low';
+        if (totalActivity > 100) activityLevel = 'high';
+        else if (totalActivity > 50) activityLevel = 'medium';
+        
+        // Count unique days with activity
+        const uniqueDays = new Set(records.map(r => r.date)).size;
+        
+        return {
+          item_name: itemName,
+          opening_stock: openingStock,
+          closing_stock: closingStock,
+          total_stock_in: totals.stock_in,
+          total_stock_out: totals.stock_out,
+          total_returns: totals.returns,
+          total_rebagging: totals.rebagging,
+          total_damaged: totals.damaged,
+          net_change: netChange,
+          movement_percentage: movementPercentage,
+          activity_level: activityLevel,
+          days_active: uniqueDays
+        };
+      })
+      .filter(product => {
+        // Filter out products with no activity (all totals are zero)
+        const totalActivity = product.total_stock_in + product.total_stock_out + product.total_returns + product.total_rebagging + product.total_damaged;
+        return totalActivity > 0;
+      })
+      .sort((a, b) => {
+        // Sort by total activity (stock in + stock out + returns + rebagging + damaged)
+        const aActivity = a.total_stock_in + a.total_stock_out + a.total_returns + a.total_rebagging + a.total_damaged;
+        const bActivity = b.total_stock_in + b.total_stock_out + b.total_returns + b.total_rebagging + b.total_damaged;
+        return bActivity - aActivity;
+      });
+
+    // Generate daily summary
+    const dailyGroups = new Map<string, InventoryRecord[]>();
+    filteredRecords.forEach(record => {
+      if (!dailyGroups.has(record.date)) {
+        dailyGroups.set(record.date, []);
+      }
+      dailyGroups.get(record.date)!.push(record);
+    });
+
+    const dailySummary = Array.from(dailyGroups.entries())
+      .map(([date, records]) => {
+        const dayName = new Date(date).toLocaleDateString('en-US', { weekday: 'short' });
+        const total_transactions = records.length;
+        
+        // Calculate detailed daily metrics
+        const dailyMetrics = {
+          stock_in: records.reduce((sum, r) => sum + r.new_stock, 0),
+          stock_out: records.reduce((sum, r) => sum + r.issued_production, 0),
+          returns: records.reduce((sum, r) => sum + r.returns, 0),
+          rebagging: records.reduce((sum, r) => sum + r.rebagging, 0),
+          damaged: records.reduce((sum, r) => sum + r.damaged, 0)
+        };
+        
+        const netChange = dailyMetrics.stock_in - dailyMetrics.stock_out;
+        
+        // Find products active on this day
+        const uniqueProducts = new Set(records.map(r => r.item_name));
+        
+        // Find most active product (highest total movements)
+        const productActivity = new Map<string, number>();
+        records.forEach(record => {
+          const activity = record.new_stock + record.issued_production + record.returns + record.rebagging + record.damaged;
+          productActivity.set(record.item_name, (productActivity.get(record.item_name) || 0) + activity);
+        });
+        
+        const mostActiveProduct = Array.from(productActivity.entries())
+          .sort((a, b) => b[1] - a[1])[0];
+        
+        // Find top product by net change
+        const productChanges = new Map<string, number>();
+        records.forEach(record => {
+          const change = record.new_stock - record.issued_production;
+          productChanges.set(record.item_name, (productChanges.get(record.item_name) || 0) + change);
+        });
+        
+        const topProduct = Array.from(productChanges.entries())
+          .sort((a, b) => Math.abs(b[1]) - Math.abs(a[1]))[0]?.[0] || 'None';
+
+        return {
+          date,
+          day_name: dayName,
+          total_transactions: total_transactions,
+          net_change: netChange,
+          top_product: topProduct,
+          total_stock_in: dailyMetrics.stock_in,
+          total_stock_out: dailyMetrics.stock_out,
+          total_returns: dailyMetrics.returns,
+          total_rebagging: dailyMetrics.rebagging,
+          total_damaged: dailyMetrics.damaged,
+          products_active: uniqueProducts.size,
+          most_active_product: mostActiveProduct?.[0] || 'None',
+          most_active_product_movements: mostActiveProduct?.[1] || 0
+        };
+      })
+      .sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
+
+    // Calculate efficiency metrics
+    const totalStockIn = summary.total_stock_in;
+    const efficiencyMetrics = {
+      return_rate: totalStockIn > 0 ? (summary.total_returns / totalStockIn) * 100 : 0,
+      damage_rate: totalStockIn > 0 ? (summary.total_damaged / totalStockIn) * 100 : 0,
+      rebagging_rate: totalStockIn > 0 ? (summary.total_rebagging / totalStockIn) * 100 : 0,
+      stock_turnover: summary.total_stock_out > 0 ? summary.total_stock_out / (summary.total_stock_in || 1) : 0
+    };
+
+    return {
+      week_start: weekStart,
+      week_end: weekEnd,
+      total_products: productMovements.length, // Only count products with activity
+      total_movements: filteredRecords.length,
+      summary,
+      product_movements: productMovements,
+      daily_summary: dailySummary,
+      efficiency_metrics: efficiencyMetrics
+    };
+  };
+
   const exportReport = (reportType: string) => {
     if (!reportData) return;
 
@@ -389,6 +632,10 @@ export default function ReportsSection({ records }: ReportsSectionProps) {
       case 'stockHistory':
         csvContent = generateStockHistoryCSV(reportData.stockHistory);
         filename = `stock_history_report_${dateRange.startDate}_to_${dateRange.endDate}.csv`;
+        break;
+      case 'weeklyReport':
+        csvContent = generateWeeklyReportCSV(reportData.weeklyReport);
+        filename = `weekly_report_${reportData.weeklyReport.week_start}_to_${reportData.weeklyReport.week_end}.csv`;
         break;
     }
 
@@ -458,6 +705,55 @@ export default function ReportsSection({ records }: ReportsSectionProps) {
     const headers = ['Product Name', 'Total Records', 'First Record Date', 'Last Record Date', 'Stock Trend'];
     const rows = data.map(item => [item.item_name, item.total_records, item.first_record, item.last_record, item.stock_trend]);
     return [headers, ...rows].map(row => row.join(',')).join('\n');
+  };
+
+  const generateWeeklyReportCSV = (data: ReportData['weeklyReport']) => {
+    const csvSections = [];
+    
+    // Header section
+    csvSections.push('WEEKLY INVENTORY REPORT');
+    csvSections.push(`Week: ${data.week_start} to ${data.week_end}`);
+    csvSections.push(`Generated: ${new Date().toLocaleDateString()}`);
+    csvSections.push('');
+    
+    // Summary section
+    csvSections.push('SUMMARY METRICS');
+    csvSections.push('Metric,Value');
+    csvSections.push(`Total Products,${data.total_products}`);
+    csvSections.push(`Total Movements,${data.total_movements}`);
+    csvSections.push(`Stock In,${data.summary.total_stock_in}`);
+    csvSections.push(`Stock Out,${data.summary.total_stock_out}`);
+    csvSections.push(`Returns,${data.summary.total_returns}`);
+    csvSections.push(`Rebagging,${data.summary.total_rebagging}`);
+    csvSections.push(`Damaged,${data.summary.total_damaged}`);
+    csvSections.push(`Net Change,${data.summary.net_change}`);
+    csvSections.push('');
+    
+    // Efficiency metrics
+    csvSections.push('EFFICIENCY METRICS');
+    csvSections.push('Metric,Percentage');
+    csvSections.push(`Return Rate,${data.efficiency_metrics.return_rate.toFixed(2)}%`);
+    csvSections.push(`Damage Rate,${data.efficiency_metrics.damage_rate.toFixed(2)}%`);
+    csvSections.push(`Rebagging Rate,${data.efficiency_metrics.rebagging_rate.toFixed(2)}%`);
+    csvSections.push(`Stock Turnover,${data.efficiency_metrics.stock_turnover.toFixed(2)}`);
+    csvSections.push('');
+    
+    // Product movements
+    csvSections.push('PRODUCT MOVEMENTS');
+    csvSections.push('Product,Opening Stock,Closing Stock,Stock In,Stock Out,Returns,Rebagging,Damaged,Net Change,Current Stock,Movement %,Activity Level,Days Active');
+    data.product_movements.forEach(item => {
+      csvSections.push(`${item.item_name},${item.opening_stock},${item.closing_stock},${item.total_stock_in},${item.total_stock_out},${item.total_returns},${item.total_rebagging},${item.total_damaged},${item.net_change},${item.closing_stock},${item.movement_percentage.toFixed(2)}%,${item.activity_level},${item.days_active}`);
+    });
+    csvSections.push('');
+    
+    // Daily summary
+    csvSections.push('DAILY SUMMARY');
+    csvSections.push('Date,Day,Transactions,Net Change,Stock In,Stock Out,Returns,Rebagging,Damaged,Products Active,Top Product,Most Active Product,Most Active Movements');
+    data.daily_summary.forEach(day => {
+      csvSections.push(`${day.date},${day.day_name},${day.total_transactions},${day.net_change},${day.total_stock_in},${day.total_stock_out},${day.total_returns},${day.total_rebagging},${day.total_damaged},${day.products_active},${day.top_product},${day.most_active_product},${day.most_active_product_movements}`);
+    });
+    
+    return csvSections.join('\n');
   };
 
   if (isLoading) {
@@ -623,6 +919,18 @@ export default function ReportsSection({ records }: ReportsSectionProps) {
         >
           <div className="text-2xl mb-2">📚</div>
           <div className="font-semibold">Stock History</div>
+        </button>
+        
+        <button
+          onClick={() => setSelectedReport('weeklyReport')}
+          className={`p-4 rounded-2xl text-center transition-all duration-300 ${
+            selectedReport === 'weeklyReport'
+              ? 'bg-gradient-to-r from-blue-600 to-indigo-600 text-white shadow-lg scale-105'
+              : 'bg-white text-gray-700 hover:shadow-lg hover:-translate-y-1'
+          }`}
+        >
+          <div className="text-2xl mb-2">📋</div>
+          <div className="font-semibold">Weekly Report</div>
         </button>
       </div>
 
@@ -1074,6 +1382,268 @@ export default function ReportsSection({ records }: ReportsSectionProps) {
                 </div>
               ))}
             </div>
+          </div>
+        )}
+
+        {selectedReport === 'weeklyReport' && (
+          <div className="p-6">
+            <div className="flex justify-between items-center mb-6">
+              <h3 className="text-2xl font-semibold text-gray-800">📋 Weekly Inventory Report</h3>
+              <div className="flex gap-2">
+                <button
+                  onClick={() => window.print()}
+                  className="px-4 py-2 bg-blue-500 text-white rounded-lg hover:bg-blue-600 transition-colors"
+                >
+                  🖨️ Print Report
+                </button>
+                <button
+                  onClick={() => exportReport('weeklyReport')}
+                  className="px-4 py-2 bg-green-500 text-white rounded-lg hover:bg-green-600 transition-colors"
+                >
+                  📊 Export CSV
+                </button>
+              </div>
+            </div>
+            
+            {reportData?.weeklyReport && (
+              <div className="space-y-6 print:space-y-4">
+                {/* Header Section */}
+                <div className="text-center border-b-2 border-gray-200 pb-4 print:border-b print:pb-2">
+                  <h1 className="text-3xl font-bold text-gray-900 print:text-2xl">WEEKLY INVENTORY REPORT</h1>
+                  <p className="text-lg text-gray-600 print:text-base">
+                    Week of {new Date(reportData.weeklyReport.week_start).toLocaleDateString()} - {new Date(reportData.weeklyReport.week_end).toLocaleDateString()}
+                  </p>
+                  <p className="text-sm text-gray-500 print:text-xs">
+                    Generated on {new Date().toLocaleDateString()} at {new Date().toLocaleTimeString()}
+                  </p>
+                </div>
+
+                {/* Summary Metrics */}
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-4 print:grid-cols-4 print:gap-2">
+                  <div className="bg-blue-50 p-4 rounded-xl border border-blue-200 print:border print:p-2">
+                    <div className="text-2xl font-bold text-blue-600 print:text-lg">{reportData.weeklyReport.total_products}</div>
+                    <div className="text-blue-700 font-semibold text-sm print:text-xs">Total Products</div>
+                  </div>
+                  <div className="bg-green-50 p-4 rounded-xl border border-green-200 print:border print:p-2">
+                    <div className="text-2xl font-bold text-green-600 print:text-lg">{reportData.weeklyReport.total_movements}</div>
+                    <div className="text-green-700 font-semibold text-sm print:text-xs">Total Movements</div>
+                  </div>
+                  <div className="bg-purple-50 p-4 rounded-xl border border-purple-200 print:border print:p-2">
+                    <div className="text-2xl font-bold text-purple-600 print:text-lg">{reportData.weeklyReport.summary.total_stock_in}</div>
+                    <div className="text-purple-700 font-semibold text-sm print:text-xs">Stock In</div>
+                  </div>
+                  <div className="bg-orange-50 p-4 rounded-xl border border-orange-200 print:border print:p-2">
+                    <div className="text-2xl font-bold text-orange-600 print:text-lg">{reportData.weeklyReport.summary.total_stock_out}</div>
+                    <div className="text-orange-700 font-semibold text-sm print:text-xs">Stock Out</div>
+                  </div>
+                </div>
+
+                {/* Efficiency Metrics */}
+                <div className="bg-gray-50 p-4 rounded-xl border border-gray-200 print:border print:p-2">
+                  <h4 className="text-lg font-semibold text-gray-800 mb-3 print:text-base">📊 Efficiency Metrics</h4>
+                  <div className="grid grid-cols-2 md:grid-cols-4 gap-4 print:grid-cols-4 print:gap-2">
+                    <div className="text-center">
+                      <div className="text-xl font-bold text-gray-800 print:text-base">
+                        {reportData.weeklyReport.efficiency_metrics.return_rate.toFixed(1)}%
+                      </div>
+                      <div className="text-gray-600 text-sm print:text-xs">Return Rate</div>
+                    </div>
+                    <div className="text-center">
+                      <div className="text-xl font-bold text-gray-800 print:text-base">
+                        {reportData.weeklyReport.efficiency_metrics.damage_rate.toFixed(1)}%
+                      </div>
+                      <div className="text-gray-600 text-sm print:text-xs">Damage Rate</div>
+                    </div>
+                    <div className="text-center">
+                      <div className="text-xl font-bold text-gray-800 print:text-base">
+                        {reportData.weeklyReport.efficiency_metrics.rebagging_rate.toFixed(1)}%
+                      </div>
+                      <div className="text-gray-600 text-sm print:text-xs">Rebagging Rate</div>
+                    </div>
+                    <div className="text-center">
+                      <div className="text-xl font-bold text-gray-800 print:text-base">
+                        {reportData.weeklyReport.efficiency_metrics.stock_turnover.toFixed(2)}
+                      </div>
+                      <div className="text-gray-600 text-sm print:text-xs">Stock Turnover</div>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Product Movements Table */}
+                <div className="bg-gradient-to-r from-blue-50 to-indigo-50 p-4 rounded-xl border border-blue-200 print:border print:p-2">
+                  <div className="flex justify-between items-center mb-3">
+                    <h4 className="text-lg font-semibold text-blue-800 print:text-base">📦 Product Movements Summary</h4>
+                    <div className="text-sm text-blue-600 print:text-xs">
+                      Showing {reportData.weeklyReport.product_movements.length} products with activity
+                    </div>
+                  </div>
+                  <div className="overflow-x-auto print:overflow-visible">
+                    <table className="w-full text-sm print:text-xs">
+                      <thead>
+                        <tr className="border-b border-blue-200 print:border-b">
+                          <th className="text-left py-2 font-semibold text-blue-800 print:py-1">Product</th>
+                          <th className="text-center py-2 font-semibold text-blue-800 print:py-1">Opening</th>
+                          <th className="text-center py-2 font-semibold text-blue-800 print:py-1">Closing</th>
+                          <th className="text-center py-2 font-semibold text-blue-800 print:py-1">Stock In</th>
+                          <th className="text-center py-2 font-semibold text-blue-800 print:py-1">Stock Out</th>
+                          <th className="text-center py-2 font-semibold text-blue-800 print:py-1">Returns</th>
+                          <th className="text-center py-2 font-semibold text-blue-800 print:py-1">Rebagging</th>
+                          <th className="text-center py-2 font-semibold text-blue-800 print:py-1">Damaged</th>
+                          <th className="text-center py-2 font-semibold text-blue-800 print:py-1">Net Change</th>
+                          <th className="text-center py-2 font-semibold text-blue-800 print:py-1">Current Stock</th>
+                          <th className="text-center py-2 font-semibold text-blue-800 print:py-1">Activity</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {reportData.weeklyReport.product_movements.map((product, index) => (
+                          <tr key={index} className="border-b border-blue-100 print:border-b hover:bg-blue-25">
+                            <td className="py-2 text-gray-800 font-medium print:py-1">{product.item_name}</td>
+                            <td className="py-2 text-center text-gray-700 print:py-1">{product.opening_stock}</td>
+                            <td className="py-2 text-center text-gray-700 print:py-1">{product.closing_stock}</td>
+                            <td className="py-2 text-center text-green-600 font-semibold print:py-1">{product.total_stock_in}</td>
+                            <td className="py-2 text-center text-red-600 font-semibold print:py-1">{product.total_stock_out}</td>
+                            <td className="py-2 text-center text-purple-600 print:py-1">{product.total_returns}</td>
+                            <td className="py-2 text-center text-orange-600 print:py-1">{product.total_rebagging}</td>
+                            <td className="py-2 text-center text-red-500 print:py-1">{product.total_damaged}</td>
+                            <td className={`py-2 text-center font-bold print:py-1 ${
+                              product.net_change > 0 ? 'text-green-600' : 
+                              product.net_change < 0 ? 'text-red-600' : 'text-gray-600'
+                            }`}>
+                              {product.net_change > 0 ? '+' : ''}{product.net_change}
+                            </td>
+                            <td className="py-2 text-center text-gray-700 font-semibold print:py-1">
+                              {product.closing_stock}
+                            </td>
+                            <td className="py-2 text-center print:py-1">
+                              <div className={`inline-flex items-center px-2 py-1 rounded-full text-xs font-semibold ${
+                                product.activity_level === 'high' ? 'bg-green-100 text-green-800' :
+                                product.activity_level === 'medium' ? 'bg-yellow-100 text-yellow-800' :
+                                'bg-gray-100 text-gray-800'
+                              } print:text-xs`}>
+                                {product.activity_level === 'high' ? '🔥' : 
+                                 product.activity_level === 'medium' ? '⚡' : '📊'} {product.activity_level}
+                              </div>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                  
+                  {/* Activity Level Legend */}
+                  <div className="mt-4 flex justify-center space-x-4 print:space-x-2">
+                    <div className="flex items-center text-xs text-gray-600 print:text-xs">
+                      <span className="w-3 h-3 bg-green-100 rounded-full mr-1"></span>
+                      <span>High Activity (100+ movements)</span>
+                    </div>
+                    <div className="flex items-center text-xs text-gray-600 print:text-xs">
+                      <span className="w-3 h-3 bg-yellow-100 rounded-full mr-1"></span>
+                      <span>Medium Activity (50-100 movements)</span>
+                    </div>
+                    <div className="flex items-center text-xs text-gray-600 print:text-xs">
+                      <span className="w-3 h-3 bg-gray-100 rounded-full mr-1"></span>
+                      <span>Low Activity (&lt;50 movements)</span>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Daily Summary */}
+                <div className="bg-gradient-to-r from-gray-50 to-blue-50 p-4 rounded-xl border border-gray-200 print:border print:p-2">
+                  <h4 className="text-lg font-semibold text-gray-800 mb-4 print:text-base">📅 Daily Activity Breakdown</h4>
+                  
+                  <div className="space-y-4 print:space-y-3">
+                    {reportData.weeklyReport.daily_summary.map((day, index) => (
+                      <div key={index} className="bg-white rounded-lg border border-gray-200 p-4 print:border print:p-3">
+                        {/* Day Header */}
+                        <div className="flex justify-between items-center mb-3 print:mb-2">
+                          <div className="flex items-center space-x-3">
+                            <div className="text-lg font-bold text-gray-800 print:text-base">{day.day_name}</div>
+                            <div className="text-sm text-gray-600 print:text-xs">{day.date}</div>
+                          </div>
+                          <div className="text-right">
+                            <div className="text-sm text-gray-600 print:text-xs">Products Active</div>
+                            <div className="text-lg font-bold text-blue-600 print:text-base">{day.products_active}</div>
+                          </div>
+                        </div>
+
+                        {/* Metrics Grid */}
+                        <div className="grid grid-cols-2 md:grid-cols-5 gap-3 print:grid-cols-5 print:gap-2 mb-3 print:mb-2">
+                          <div className="text-center bg-green-50 p-2 rounded-lg print:border print:p-1">
+                            <div className="text-lg font-bold text-green-600 print:text-sm">{day.total_stock_in}</div>
+                            <div className="text-xs text-green-700 print:text-xs">Stock In</div>
+                          </div>
+                          <div className="text-center bg-red-50 p-2 rounded-lg print:border print:p-1">
+                            <div className="text-lg font-bold text-red-600 print:text-sm">{day.total_stock_out}</div>
+                            <div className="text-xs text-red-700 print:text-xs">Stock Out</div>
+                          </div>
+                          <div className="text-center bg-purple-50 p-2 rounded-lg print:border print:p-1">
+                            <div className="text-lg font-bold text-purple-600 print:text-sm">{day.total_returns}</div>
+                            <div className="text-xs text-purple-700 print:text-xs">Returns</div>
+                          </div>
+                          <div className="text-center bg-orange-50 p-2 rounded-lg print:border print:p-1">
+                            <div className="text-lg font-bold text-orange-600 print:text-sm">{day.total_rebagging}</div>
+                            <div className="text-xs text-orange-700 print:text-xs">Rebagging</div>
+                          </div>
+                          <div className="text-center bg-red-50 p-2 rounded-lg print:border print:p-1">
+                            <div className="text-lg font-bold text-red-500 print:text-sm">{day.total_damaged}</div>
+                            <div className="text-xs text-red-600 print:text-xs">Damaged</div>
+                          </div>
+                        </div>
+
+                        {/* Net Change and Transactions */}
+                        <div className="flex justify-between items-center mb-3 print:mb-2">
+                          <div className="flex items-center space-x-4">
+                            <div>
+                              <div className="text-sm text-gray-600 print:text-xs">Net Change</div>
+                              <div className={`text-lg font-bold print:text-sm ${
+                                day.net_change > 0 ? 'text-green-600' : 
+                                day.net_change < 0 ? 'text-red-600' : 'text-gray-600'
+                              }`}>
+                                {day.net_change > 0 ? '+' : ''}{day.net_change}
+                              </div>
+                            </div>
+                            <div>
+                              <div className="text-sm text-gray-600 print:text-xs">Transactions</div>
+                              <div className="text-lg font-bold text-gray-800 print:text-sm">{day.total_transactions}</div>
+                            </div>
+                          </div>
+                        </div>
+
+                        {/* Top Products */}
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-3 print:grid-cols-2 print:gap-2">
+                          <div className="bg-blue-50 p-3 rounded-lg print:border print:p-2">
+                            <div className="text-sm font-semibold text-blue-800 print:text-xs mb-1">📈 Top Product (Net Change)</div>
+                            <div className="text-sm text-blue-700 print:text-xs">{day.top_product}</div>
+                          </div>
+                          <div className="bg-green-50 p-3 rounded-lg print:border print:p-2">
+                            <div className="text-sm font-semibold text-green-800 print:text-xs mb-1">🔥 Most Active Product</div>
+                            <div className="text-sm text-green-700 print:text-xs">
+                              {day.most_active_product} ({day.most_active_product_movements} movements)
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+
+                {/* Additional Summary */}
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-4 print:grid-cols-3 print:gap-2">
+                  <div className="bg-green-50 p-4 rounded-xl border border-green-200 print:border print:p-2">
+                    <div className="text-xl font-bold text-green-600 print:text-base">{reportData.weeklyReport.summary.total_returns}</div>
+                    <div className="text-green-700 font-semibold text-sm print:text-xs">Total Returns</div>
+                  </div>
+                  <div className="bg-purple-50 p-4 rounded-xl border border-purple-200 print:border print:p-2">
+                    <div className="text-xl font-bold text-purple-600 print:text-base">{reportData.weeklyReport.summary.total_rebagging}</div>
+                    <div className="text-purple-700 font-semibold text-sm print:text-xs">Total Rebagging</div>
+                  </div>
+                  <div className="bg-red-50 p-4 rounded-xl border border-red-200 print:border print:p-2">
+                    <div className="text-xl font-bold text-red-600 print:text-base">{reportData.weeklyReport.summary.total_damaged}</div>
+                    <div className="text-red-700 font-semibold text-sm print:text-xs">Total Damaged</div>
+                  </div>
+                </div>
+              </div>
+            )}
           </div>
         )}
       </div>
